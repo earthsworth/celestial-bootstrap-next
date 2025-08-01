@@ -1,0 +1,21 @@
+[package]
+name = "celestial-bootstrap-next"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.98"
+clap = { version = "4.5.42", features = ["derive"] }
+env_logger = "0.11.8"
+git2 = "0.20.2"
+log = "0.4.27"
+#reqwest = "0.12.22"
+shlex = "1.3.0"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "fs", "process", "macros"] }
+which = "8.0.0"
+thiserror = "1.0"
+once_cell = "1.18"
+regex = "1.11.1"
+
+[build-dependencies]
+winres = "0.1"
