@@ -7,8 +7,8 @@ A tool to auto configure/launch Celestial
 - [x] Clone Celestial repo
 - [x] Build Celestial
 - [x] Find Java
-- [ ] Clone BrowserDebugger repo
-- [ ] Build BrowserDebugger
+- [x] Clone BrowserDebugger repo
+- [x] Build BrowserDebugger
 - [ ] Download java
 
 ## Build
