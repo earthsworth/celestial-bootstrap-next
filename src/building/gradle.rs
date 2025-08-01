@@ -1,12 +1,17 @@
+use crate::java::JdkTrait;
+use log::info;
 use std::env;
 use std::error::Error as StdError;
 use std::fmt;
 use std::path::{Path, PathBuf};
+use tokio::fs;
+use tokio::fs::DirEntry;
+use tokio_stream::StreamExt;
+use tokio_stream::wrappers::ReadDirStream;
 
 /// Represents errors that can occur during Gradle argument generation.
 #[derive(Debug)]
 pub enum GenerateArgsError {
-
     /// `JAVA_HOME` was not provided, and the `java` executable could not be found
     /// in the system's `PATH`.
     JavaNotFound,
@@ -146,4 +151,71 @@ pub fn generate_gradle_args(
     final_args.extend_from_slice(options.cli_args);
 
     Ok((PathBuf::from(java_cmd), final_args))
+}
+
+pub async fn build_with_gradle(
+    jdk: &impl JdkTrait,
+    project_path: &Path,
+    emitted_jar_path: &Path,
+    fatjar_pattern: &str,
+) -> anyhow::Result<()> {
+    let gradle_run_cmd = generate_gradle_args(&GradleLaunchOptions {
+        jdk_home: Some(jdk.java_executable()),
+        app_home: project_path,
+        app_base_name: "gradlew",
+
+        cli_args: &["build".to_string()],
+        gradle_opts: None,
+        java_opts: None,
+    })?;
+
+    // do cleanup first
+    let build_libs_dir = project_path.join("build").join("libs");
+
+    if fs::try_exists(&build_libs_dir).await? {
+        info!("Clean build files: {}", build_libs_dir.display());
+        fs::remove_dir_all(&build_libs_dir).await?;
+    }
+
+    info!("Spawning gradle: {}", gradle_run_cmd.1.join(" "));
+
+    let mut command = tokio::process::Command::new(&gradle_run_cmd.0);
+    command.args(gradle_run_cmd.1);
+    command.current_dir(&project_path);
+    let mut child = command.spawn()?;
+
+    // wait for build thread
+    child.wait().await?;
+    info!("Gradle built successfully");
+
+    // locate emitted .jar file
+    let mut stream = ReadDirStream::new(fs::read_dir(&build_libs_dir).await?);
+    while let Some(file) = stream.next().await {
+        let file = file?;
+
+        let file_name = file.file_name();
+        let file_name: String = file_name.to_string_lossy().into();
+        println!("{file_name}");
+        if file_name.contains(fatjar_pattern) {
+            if fs::try_exists(emitted_jar_path).await? {
+                // remove this file
+                info!("Remove exist jar {}", emitted_jar_path.display());
+                fs::remove_file(emitted_jar_path).await?;
+            }
+            // move file
+            let built_jar = file.path();
+            info!(
+                "Move built jar {} to {}",
+                built_jar.display(),
+                emitted_jar_path.display()
+            );
+            let parent = emitted_jar_path.parent().unwrap();
+            fs::create_dir_all(parent).await?;
+            fs::rename(built_jar, emitted_jar_path).await?;
+            info!("Successful built {}", emitted_jar_path.display());
+            break;
+        }
+    }
+
+    Ok(())
 }

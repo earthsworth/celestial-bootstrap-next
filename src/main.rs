@@ -3,16 +3,16 @@ mod config;
 mod java;
 pub mod utils;
 
-use crate::building::gradle::{generate_gradle_args, GradleLaunchOptions};
+use crate::building::gradle::{GradleLaunchOptions, build_with_gradle};
 use crate::config::ProgramParameters;
 use crate::java::{Jdk, JdkTrait};
-use crate::utils::git::{fast_forward, FastForwardStatus};
+use crate::utils::git::{FastForwardStatus, fast_forward};
 use clap::Parser;
 use git2::Repository;
 use log::{error, info};
 use std::path::{Path, PathBuf};
-use std::{env, io, process};
 use std::process::ExitStatus;
+use std::{env, io, process};
 use tokio::fs;
 
 #[tokio::main]
@@ -33,6 +33,12 @@ async fn main() -> anyhow::Result<()> {
     base_dir.push("lunarcn");
     base_dir.push("bootstrap-next");
 
+    let mut javaagent_dir = PathBuf::new();
+    javaagent_dir.push(env::home_dir().unwrap());
+    javaagent_dir.push(".cubewhy");
+    javaagent_dir.push("lunarcn");
+    javaagent_dir.push("javaagents");
+
     // parse args
     let args = ProgramParameters::parse();
 
@@ -43,12 +49,21 @@ async fn main() -> anyhow::Result<()> {
         process::exit(1);
     };
 
-    info!("Use Jdk {} {}", jdk.version(), jdk.java_executable().to_string_lossy());
+    info!(
+        "Use Jdk {} {}",
+        jdk.version(),
+        jdk.java_executable().to_string_lossy()
+    );
 
     let celestial_jar_path = base_dir.join("celestial.jar");
+    let debugger_jar_path = javaagent_dir.join("browser-debugger.jar");
 
-    match check_update_for_celestial(
-        &base_dir,
+    let is_first_run = !fs::try_exists(&celestial_jar_path).await?;
+
+    // update Celestial
+    info!("Check update for Celestial Launcher");
+    match check_update(
+        &base_dir.join("repositories").join("celestial"),
         "https://codeberg.org/earthsworth/celestial.git",
         &args.celestial_branch,
         &celestial_jar_path,
@@ -62,16 +77,40 @@ async fn main() -> anyhow::Result<()> {
             process::exit(1);
         }
     }
+    // Update Browser Debugger
+    if fs::try_exists(&debugger_jar_path).await? || is_first_run {
+        info!("Check update for Browser Debugger");
+        match check_update(
+            &base_dir.join("repositories").join("browser-debugger"),
+            "https://codeberg.org/earthsworth/BrowserDebugger.git",
+            &args.debugger_branch,
+            &debugger_jar_path,
+            &jdk,
+        )
+        .await
+        {
+            Ok(_) => (),
+            Err(err) => {
+                log_backtrace!("Failed to update BrowserDebugger! {}", err);
+                process::exit(1);
+            }
+        }
+    } else {
+        info!("Skipped check update for Browser Debugger: user manually removed the agent");
+    }
 
     // spawn celestial
+    info!("Spawning Celestial Launcher");
     if let Ok(status) = spawn_jar(&jdk, &celestial_jar_path).await {
         if status.success() {
-        info!("Celestial launcher terminated.");
+            info!("Celestial launcher terminated.");
         } else {
-            error!("Celestial launcher terminated with a non-zero exit code: {}", status.code().unwrap_or(-1));
+            error!(
+                "Celestial launcher terminated with a non-zero exit code: {}",
+                status.code().unwrap_or(-1)
+            );
         }
     };
-
 
     Ok(())
 }
@@ -86,16 +125,15 @@ async fn spawn_jar(java: &impl JdkTrait, jar_path: &Path) -> io::Result<ExitStat
     child.wait().await
 }
 
-async fn check_update_for_celestial(
-    base_dir: &Path,
+async fn check_update(
+    repo_path: &Path,
     repo: &str,
     branch: &str,
     emitted_jar_path: &Path,
     jdk: &impl JdkTrait,
 ) -> anyhow::Result<()> {
-    let repo_path = base_dir.join("repositories").join("celestial");
-
     let branch = branch.to_string();
+    let repo_path = repo_path.to_owned();
     let repo = repo.to_string();
     // (repo, should (re-)build jar)
     let (repo, should_build): (Repository, bool) = tokio::task::spawn_blocking(move || {
@@ -109,11 +147,11 @@ async fn check_update_for_celestial(
                         Ok(status) => {
                             return Ok((repo, status == FastForwardStatus::FastForward));
                         }
-                        Err(err) => error!("Failed to pull celestial repository: {err}"),
+                        Err(err) => error!("Failed to pull repository: {err}"),
                     }
                     if let Err(err) = fast_forward(&repo, &branch) {
                         // it's ok failed to pull repository
-                        error!("Failed to pull celestial repository: {err}");
+                        error!("Failed to pull repository: {err}");
                     }
                     Ok((repo, false))
                 }
@@ -122,7 +160,7 @@ async fn check_update_for_celestial(
         }
         // repository not found
         // clone the repository
-        info!("Cloning Celestial from repository {repo}");
+        info!("Cloning from repository {repo}");
         let repo = match Repository::clone(&repo, &repo_path) {
             Ok(repo) => repo,
             Err(e) => return Err(e),
@@ -142,59 +180,8 @@ async fn check_update_for_celestial(
 
     // build with gradle
     if should_build {
-        let gradle_run_cmd = generate_gradle_args(&GradleLaunchOptions {
-            jdk_home: Some(jdk.java_executable()),
-            app_home: repo_path,
-            app_base_name: "gradlew",
-
-            cli_args: &["build".to_string()],
-            gradle_opts: None,
-            java_opts: None,
-        })?;
-
-        // spawn celestial process
         info!("Building Celestial");
-
-        // do cleanup first
-        let build_libs_dir = repo_path.join("build").join("libs");
-
-        if fs::try_exists(&build_libs_dir).await? {
-            fs::remove_dir_all(&build_libs_dir).await?;
-        }
-
-        info!("Spawning gradle: {}", gradle_run_cmd.1.join(" "));
-
-        let mut command = tokio::process::Command::new(&gradle_run_cmd.0);
-        command.args(gradle_run_cmd.1);
-        command.current_dir(&repo_path);
-        let mut child = command.spawn()?;
-
-        // wait for build thread
-        child.wait().await?;
-        info!("Gradle built successfully");
-
-        // locate emitted .jar file
-        while let Some(file) = fs::read_dir(&build_libs_dir).await?.next_entry().await? {
-            let file_name = file.file_name();
-            let file_name: String = file_name.to_string_lossy().into();
-            if file_name.contains("-fatjar") {
-                if fs::try_exists(emitted_jar_path).await? {
-                    // remove this file
-                    info!("Remove exist jar {}", emitted_jar_path.display());
-                    fs::remove_file(emitted_jar_path).await?;
-                }
-                // move file
-                let built_jar = file.path();
-                info!(
-                    "Move built jar {} to {}",
-                    built_jar.display(),
-                    emitted_jar_path.display()
-                );
-                fs::rename(built_jar, emitted_jar_path).await?;
-                break;
-            }
-        }
-        info!("Complete updated Celestial launcher");
+        build_with_gradle(jdk, &repo_path, emitted_jar_path, "-fatjar").await?;
     }
 
     Ok(())
