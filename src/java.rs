@@ -1,4 +1,5 @@
-mod resolving;
+pub mod download;
+pub mod resolving;
 
 use crate::java::resolving::resolve_java_version;
 use log::error;

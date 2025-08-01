@@ -45,6 +45,7 @@ async fn main() -> anyhow::Result<()> {
     info!("Welcome to Celestial Bootstrap Next!");
 
     let Some(jdk) = Jdk::resolve_higher(17).await else {
+        // TODO: download jdk
         error!("Celestial requires Jdk 17 or higher to run, please download one manually.");
         process::exit(1);
     };
