@@ -1,22 +1,20 @@
-use async_zip::{error::ZipError, tokio::read::seek::ZipFileReader};
+use async_zip::error::ZipError;
 use digest::DynDigest;
 use futures_util::StreamExt;
-use log::{error, info, warn};
+use log::error;
 use md5::Digest;
 use reqwest::Client;
-use sha2::Sha256;
 use std::{backtrace::Backtrace, ops::Range, path::PathBuf, sync::Arc};
 use tokio::{
     fs::{self, File},
     io::{AsyncWriteExt, BufReader},
     sync::mpsc,
 };
-use tokio_util::compat::FuturesAsyncReadCompatExt;
 
 use thiserror::Error;
 
 use crate::utils::{
-    hashing::{Hash, HashingError, compare_file_hash},
+    hashing::{Hash, HashingError},
     stream::stream_write_and_calculate_hash,
     tempfile_async,
 };

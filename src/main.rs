@@ -3,7 +3,7 @@ mod config;
 mod java;
 pub mod utils;
 
-use crate::building::gradle::{GradleLaunchOptions, build_with_gradle};
+use crate::building::gradle::build_with_gradle;
 use crate::config::ProgramParameters;
 use crate::java::{Jdk, JdkTrait};
 use crate::utils::git::{FastForwardStatus, fast_forward};

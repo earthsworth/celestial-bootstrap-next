@@ -5,7 +5,6 @@ use std::error::Error as StdError;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use tokio::fs;
-use tokio::fs::DirEntry;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReadDirStream;
 
