@@ -23,7 +23,7 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             artifact_name: celestial-bootstrap-next
-            asset_name: celestial-bootstrap-linux-next-x86_64
+            asset_name: celestial-bootstrap-next-linux-x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact_name: celestial-bootstrap-next.exe
